@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin>
+	<name>
+		<lang name="default">uLogin Livestreet plugin</lang>
+		<lang name="russian">Плагин для сервиса uLogin</lang>
+	</name>
+	<author>
+		<lang name="default">uLogin Team, [team@ulogin.ru]</lang>
+	</author>
+	<homepage>http://ulogin.ru</homepage>
+	<version>1.7</version>
+	<settings>{ulogin}admin/</settings>
+	<requires>
+		<livestreet>0.5.1</livestreet>
+		<plugins>
+		</plugins>
+	</requires>
+	<description>
+	</description>
+</plugin>
