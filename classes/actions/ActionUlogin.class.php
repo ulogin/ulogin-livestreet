@@ -193,8 +193,10 @@ class PluginUlogin_ActionUlogin extends ActionPlugin {
 		else 
 			$userData['sex'] = 'women';
 		
-		if(isset($userData['bdate']) and $userData['bdate'])
-			$userData['bdate'] = DateTime::createFromFormat ( "d.m.Y" , $userData['bdate'])->format('Y-m-d H:i:s');
+		if(isset($userData['bdate']) and !empty($userData['bdate'])){
+                    $bdate = explode('.', $userData['bdate']);
+                    $userData['bdate'] = date('Y-m-d H:i:s', mktime(0,0,0,$bdate[1],$bdate[0], $bdate[2]));
+                }
 		
 		$oUser=Engine::GetEntity('User');
 		$oUser->setLogin($userData['nickname']);
