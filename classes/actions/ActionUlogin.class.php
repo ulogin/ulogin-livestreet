@@ -414,55 +414,56 @@ class PluginUlogin_ActionUlogin extends ActionPlugin {
 						return Router::Action('error');
 					}
 
-					$this->User_Authorization($oUser,$bRemember);	
-					 
+					$this->User_Authorization($oUser,$bRemember);
+
 					Router::Location(Config::Get('path.root.web').'/');
 				}
-			}			
+			}
 			$this->Viewer_Assign('bLoginError',true);
 		}
 		elseif(!$user_info)
 			return parent::EventNotFound();
 	}
 	 */
-	
+
 	private function UserRegistration($oUser, $uLoginUserData)
 	{
-		if ($oUser = $this->User_Add($oUser) and $this->bind($oUser, $uLoginUserData['identity'])) {	
+		if ($oUser = $this->User_Add($oUser) and $this->bind($oUser, $uLoginUserData['identity'])) {
 			/**
 			 * Создаем персональный блог
 			 */
-			
+
 			if(isset($uLoginUserData['photo']) && $uLoginUserData['photo'] && $photo = $this->loadFile($uLoginUserData['photo']))
 			{
-				if($sPath=$this->UploadAvatar($photo,$oUser)) 
+				if($sPath=$this->UploadAvatar($photo,$oUser))
 					$oUser->setProfileAvatar($sPath);
 			}
-			
+
 			if(isset($uLoginUserData['photo_big']) && $uLoginUserData['photo_big'] && $photo_big = $this->loadFile($uLoginUserData['photo_big']))
 			{
 				if ($sFileFoto=$this->UploadFoto($photo_big,$oUser))
 					$oUser->setProfileFoto($sFileFoto);
 			}
-			
+
 			if ($oUser->getProfileCountry()) {
-				if (!($oCountry=$this->User_GetCountryByName($oUser->getProfileCountry()))) {
-					$oCountry=Engine::GetEntity('User_Country');
-					$oCountry->setName($oUser->getProfileCountry());
+				/*if (!($oCountry=$this->Geo_GetCountryByName($oUser->getProfileCountry()))) {
+					$oCountry=Engine::GetEntity('Geo_Country');
+     				$oCountry->setName($oUser->getProfileCountry());
 					$this->User_AddCountry($oCountry);
 				}
-				$this->User_SetCountryUser($oCountry->getId(),$oUser->getId());
+				$this->User_SetCountryUser($oCountry->getId(),$oUser->getId());*/
 			}
+
 			/**
 			 * Добавляем город
 			 */
-			if ($oUser->getProfileCity()) {
-				if (!($oCity=$this->User_GetCityByName($oUser->getProfileCity()))) {
+    		if ($oUser->getProfileCity()) {
+				/*if (!($oCity=$this->User_GetCityByName($oUser->getProfileCity()))) {
 					$oCity=Engine::GetEntity('User_City');
 					$oCity->setName($oUser->getProfileCity());
 					$this->User_AddCity($oCity);
 				}
-				$this->User_SetCityUser($oCity->getId(),$oUser->getId());
+				$this->User_SetCityUser($oCity->getId(),$oUser->getId()); */
 			}
 
 			$this->User_Update($oUser);

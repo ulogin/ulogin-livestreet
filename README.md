@@ -4,7 +4,7 @@ Contributors: uLogin
 Donate link: http://ulogin.ru/donate.html
 Tags: ulogin, login, social, authorization
 Requires at least: 0.5
-Tested up to: 0.5.1
+Tested up to: 1.0
 Stable tag: 1.7
 License: GPL V3
 
@@ -25,4 +25,5 @@ uLogin — это инструмент, который позволяет пол
 
 == Changelog ==
   - Изменен внешний вид виджета;
-  - Вызов статичного метода DateTime::createFromFormat() изменен для работы с версий PHP 5.2.
+  - Вызов статичного метода DateTime::createFromFormat() изменен для работы с версий PHP 5.2;
+  - Добавлены изменения для работы с версией 1.0.0
