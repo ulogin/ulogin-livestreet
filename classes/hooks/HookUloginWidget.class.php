@@ -1,4 +1,4 @@
-<? 
+<?php
 class PluginUlogin_HookUloginWidget extends Hook {   
         public function RegisterHook() {
                 $this->AddHook('template_form_login_popup_begin','UloginWidget',__CLASS__,1);
