@@ -1,7 +1,6 @@
 === uLogin - виджет авторизации через социальные сети ===
 === uLogin is widget for user's authorization using social networks ===
 Contributors: uLogin
-Donate link: http://ulogin.ru/donate.html
 Tags: ulogin, login, social, authorization
 Requires at least: 0.5
 Tested up to: 1.0
