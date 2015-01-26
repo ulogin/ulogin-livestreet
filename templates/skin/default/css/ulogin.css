@@ -1,0 +1,33 @@
+.ulogin_form {
+    display: inline-block;
+    line-height: 1em;
+}
+
+#header li.ulogin_header {
+    float: right;
+}
+
+.ulogin_profile dl.form-item dt{
+    width: 20%;
+}
+
+.ulogin_profile dl.form-item dd{
+    width: 70%;
+    margin-bottom: 12px;
+}
+
+.ulogin_provider {
+    margin-right: 10px;
+    display: inline-block;
+    cursor: pointer;
+    float: left;
+}
+
+.ulogin_provider:hover
+{
+    opacity: 0.75;
+}
+
+#ulogin-message-box {
+    display: none;
+}

@@ -1,17 +1,14 @@
 <?php
 /*---------------------------------------------------------------------------------------
- *	author: helper [helper2424@gmail.com]
- *	plugin: Forum
- *	author site: http://x01d.com/
- *	license: CC BY-SA 3.0, http://creativecommons.org/licenses/by-sa/3.0/ *--------------------------------------------------------------------------------------*/
- 
-$config=array();
+ *	author: uLogin Team, [team@ulogin.ru]
+ *	plugin: uLogin
+ *	author site: https://ulogin.ru/
+ *	license: GNU General Public License, version 2
+ * --------------------------------------------------------------------------------------*/
 
-$config['one_click_registration'] = true;
+$config['table']['ulogin']            = '___db.table.prefix___ulogin';
+$config['table']['ulogin_settings']   = '___db.table.prefix___ulogin_settings';
 
-/**
- * Настройки роутера
- */
 Config::Set('router.page.ulogin', 'PluginUlogin_ActionUlogin');
 
 return $config;

@@ -1,20 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugin>
 	<name>
-		<lang name="default">uLogin Livestreet plugin</lang>
-		<lang name="russian">Плагин для сервиса uLogin</lang>
+		<lang name="default">uLogin - authorisation</lang>
+		<lang name="russian">uLogin - авторизация</lang>
+		<!--<lang name="default">uLogin Livestreet plugin</lang>-->
+		<!--<lang name="russian">Плагин для сервиса uLogin</lang>-->
 	</name>
 	<author>
 		<lang name="default">uLogin Team, [team@ulogin.ru]</lang>
 	</author>
-	<homepage>http://ulogin.ru</homepage>
-	<version>1.7</version>
+	<homepage>https://ulogin.ru</homepage>
+	<version>2.0.0</version>
 	<settings>{ulogin}admin/</settings>
 	<requires>
-		<livestreet>0.5.1</livestreet>
+		<livestreet>1.0.3</livestreet>
 		<plugins>
 		</plugins>
 	</requires>
 	<description>
+		<lang name="russian">Авторизация пользователей через социальные сети и популярные порталы (Google, Яндекс, Mail.ru, ВКонтакте, Facebook и др.)</lang>
 	</description>
 </plugin>

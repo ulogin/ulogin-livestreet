@@ -1,663 +1,893 @@
 <?php
 /*---------------------------------------------------------------------------------------
- *	author: helper [helper2424@gmail.com, x01d.com]
+ *	author: uLogin Team, [team@ulogin.ru]
  *	plugin: uLogin
- *	author site: http://x01d.com/
- *	license: CC BY-SA 3.0, http://creativecommons.org/licenses/by-sa/3.0/ 
+ *	author site: https://ulogin.ru/
+ *	license: GNU General Public License, version 2
  * --------------------------------------------------------------------------------------*/
 
 class PluginUlogin_ActionUlogin extends ActionPlugin {
-	/**
-	 * Текущий юзер
-	 *
-	 * @var ModuleUser_EntityUser
-	 */
-	protected $oUserCurrent=null;
-	protected $oUserAdmin=false;
+	protected $u_data;
+	protected $currentUserId;
+	protected $isUserLogined;
+	protected $doRedirect;
+	protected $token;
+	protected $redirect;
+	protected $oUserCurrent;
 
-	/**
-	 * Инициализация экшена
-	 */
+
 	public function Init() {
-		/**
-		 * Получаем текущего пользователя
-		 */
-		$this->oUserCurrent=$this->User_GetUserCurrent();
-		if ($this->oUserCurrent && $this->oUserCurrent->isAdministrator()) {
-			$this->oUserAdmin=true;
+		$this->SetDefaultEvent('login');
+	}
+
+	protected function RegisterEvent() {
+		$this->AddEvent('login','EventLogin');
+		$this->AddEvent('deleteaccount','EventDeleteAccount');
+		$this->AddEvent('admin','EventAdmin');
+	}
+
+	public function EventLogin() {
+		$title = '';
+		$msg = '';
+
+		if (isAjaxRequest()) {
+			$this->doRedirect = false;
+		} else {
+			$this->doRedirect = true;
 		}
 
-		/**
-		 * Устанавливаем дефолтный эвент
-		 */
-		$this->SetDefaultEvent('index');
-		/**
-		 * Устанавливаем дефолтный шаблон
-		 */
-		$this->SetTemplateAction('index');
+		$this->isUserLogined = $this->User_IsAuthorization();
+		if ($this->isUserLogined) {
+			$this->currentUserId = $this->User_GetUserCurrent()->getId();
+		} else {
+			$this->currentUserId = 0;
+		}
+
+		if ($this->isUserLogined){
+			$msg = 'plugin.ulogin.ulogin_add_account_success';//'Аккаунт успешно добавлен';
+		}
+
+		$this->uloginLogin($title, $msg);
+
+		if (isAjaxRequest()) {
+			exit;
+		}
+
+		$this->SetTemplate(false);
 	}
-        
-        // Получение полного пути шаблона
-	protected function GetTemplateActionPath($sTemplate) {
-		return Plugin::GetTemplatePath(__CLASS__).'actions/ActionUlogin/'.$sTemplate.'.tpl';
-	} 
-	    
-	// Назначаем шаблон текущему экшену
-	protected function SetTemplateAction($sTemplate) {
-		$this->SetTemplate($this->GetTemplateActionPath($sTemplate));
+
+	public function EventDeleteAccount() {
+		$this->deleteAccount();
+		$this->SetTemplate(false);
 	}
-        
-        /**
-         * Регистрация эвентов
-         */
-        protected function RegisterEvent() {
-                $this->AddEvent('index','EventIndex');   
-		//$this->AddEvent('registration', 'EventRegistration');    
-		$this->AddEvent('admin','EventAdmin');
-		//$this->AddEvent('bind','EventBind');
-		//$this->AddEvent('one_click_registration','EventOneClickRegistration');
-        }
+
+	public function EventAdmin() {
+
+		$this->oUserCurrent = $this->User_GetUserCurrent();
+		if (!$this->oUserCurrent or !$this->oUserCurrent->isAdministrator()) {
+			return $this->EventNotFound();
+		}
+
+		if(isPost('admin_submit')) {
+			$settings = array(
+				'uloginid1'         => mysql_real_escape_string(getRequest('uloginid1', '', 'post')),
+				'uloginid2'         => mysql_real_escape_string(getRequest('uloginid2', '', 'post')),
+				'uloginid_profile'  => mysql_real_escape_string(getRequest('uloginid_profile', '', 'post')),
+			);
+
+			$this->PluginUlogin_Ulogin_setSettings($settings);
+		} else {
+			$settings = $this->PluginUlogin_Ulogin_getSettings();
+		}
+
+		$this->Viewer_Assign('uloginid1', $settings['uloginid1']);
+		$this->Viewer_Assign('uloginid2', $settings['uloginid2']);
+		$this->Viewer_Assign('uloginid_profile', $settings['uloginid_profile']);
+
+		$this->Viewer_SetHtmlTitle($this->Lang_Get('plugin.ulogin.admin_ulogin_title') . ' / ' . Config::Get('view.name'));
+
+		$this->SetTemplateAction('admin');
+		return true;
+	}
+
+//============================================================
+
+
+	protected function uloginLogin ($title = '', $msg = '') {
+
+		$this->u_data = $this->uloginParseRequest();
+		if ( !$this->u_data ) {
+			return;
+		}
+
+		try {
+			$u_user_db = $this->PluginUlogin_Ulogin_getUloginUserItem(array('identity' => $this->u_data['identity']));;
+			$user_id = 0;
+
+			if ( $u_user_db ) {
+
+				if ($this->PluginUlogin_Ulogin_checkUserId($u_user_db['user_id'])) {
+					$user_id = $u_user_db['user_id'];
+				}
+
+				if ( intval( $user_id ) > 0 ) {
+					if ( !$this->checkCurrentUserId( $user_id ) ) {
+						// если $user_id != ID текущего пользователя
+						return;
+					}
+				} else {
+					// данные о пользователе есть в ulogin_table, но отсутствуют в users. Необходимо переписать запись в ulogin_table и в базе users.
+					$user_id = $this->newUloginAccount( $u_user_db );
+				}
+
+			} else {
+				// пользователь НЕ обнаружен в ulogin_table. Необходимо добавить запись в ulogin_table и в базе users.
+				$user_id = $this->newUloginAccount();
+			}
+
+			// обновление данных и Вход
+			if ( $user_id > 0 ) {
+				$this->loginUser( $user_id );
+
+				$networks = $this->PluginUlogin_Ulogin_getUloginUserNetworks( $user_id );
+				$this->sendMessage(array(
+					'title' => $title,
+					'msg' => $msg,
+					'networks' => $networks,
+					'type' => 'success',
+				));
+				return;
+			}
+
+			$this->sendMessage (array(
+				'title' => '',
+				'msg' => 'plugin.ulogin.ulogin_login_error',
+				'type' => 'error'
+			));
+			return;
+		}
+
+		catch (Exception $e){
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_db_error',//"Ошибка при работе с БД.",
+				'msg' => "Exception: " . $e->getMessage(),
+				'type' => 'error'
+			));
+			return;
+		}
+	}
+
 
 	/**
-	 * Основная страница плагина
-	 *
+	 * Отправляет данные как ответ на ajax запрос, если код выполняется в результате вызова callback функции,
+	 * либо добавляет сообщение в сессию для вывода в режиме redirect
+	 * @param array $params
 	 */
-	public function EventIndex() {
-		//Получаем token от uLogin
-		$token = getRequest('token', false);
+	protected function sendMessage ($params = array()) {
+		$params = array(
+			'title' => !empty($params['title']) ? $this->Lang_Get($params['title']) : '',
+			'msg' => !empty($params['msg'])
+				? (!is_array($params['msg'])
+					? $this->Lang_Get($params['msg']) 
+					: $this->Lang_Get($params['msg'][0], array('s'=>$params['msg'][1])))
+				: '',
+			'type' => isset($params['type']) ? $params['type'] : '',
+			'script' => isset($params['script']) ? $params['script'] : '',
+			'networks' => isset($params['networks']) ? $params['networks'] : '',
+		);
 
-		if(!$token)
-		{
-			$this->Message_AddErrorSingle($this->Lang_Get('ulogin_token_error'));
-			return Router::Action('error');
-		}
-	
-		try
-		{
-			//Получаем пользователские данные от uLogin
-			$s = file_get_contents('http://ulogin.ru/token.php?token=' . trim(substr($token, 0, 100)) . '&host=' . $_SERVER['HTTP_HOST']);
-			$user = json_decode($s, true);
-				
-			//Защита от mysql инъекуий
-			foreach($user as $key => $value)
-				$user[$key] = mysql_real_escape_string(substr(trim((string)$value), 0, 100));
-	
-			//Проверка наличия у полученных данных уникального польховательского идентификатора
-			if(!isset($user['identity']))
-				throw new Exception(); 
-		}
-		catch(Exception $excp)
-		{
-			$this->Message_AddErrorSingle($this->Lang_Get('ulogin_token_error'));
-			return Router::Action('error');
-		}
+		if ($this->doRedirect){
+			$message = $params['msg'];
 
-		//Выбор дальнейших действий
-		$oUloginUser=$this->PluginUlogin_ModuleUlogin_GetUloginByIdentity($user['identity']);
-		
-		if($oUloginUser)
-		{
-			//Если пользователь уже привязал данный аккаунт 
-			if($this->oUserCurrent)
-				// и зарегистрирован и уже авторизован, то выдаем ошибку
-				return parent::EventNotFound();	
-			else
-			{
-				// и не авторизован, то авторизуем его
-				$oUser = $this->ModuleUser_GetUserById($oUloginUser->getUserid());
-				$this->User_Authorization($oUser, true);
-				
-				if (isset($_SERVER['HTTP_REFERER'])) {
-					$sBackUrl=$_SERVER['HTTP_REFERER'];
-					if (strpos($sBackUrl,Router::GetPath('ulogin'))===false) {
-						Router::Location($sBackUrl);
-					}
+			if (!empty($params['script'])) {
+				$token = !empty($params['script']['token']) ? $params['script']['token'] : '';
+				$identity = !empty($params['script']['identity']) ? $params['script']['identity'] : '';
+				$s = '';
+
+				if  ($token && $identity) {
+					$s = "uLogin.mergeAccounts('$token', '$identity');";
+				} else if ($token) {
+					$s = "uLogin.mergeAccounts('$token');";
 				}
 
-				Router::Location(Config::Get('path.root.web').'/');	
-			}
-		}
-		else
-		{
-			//Если данные, полученные от uLogin, не зарегистрированы в базе, то
-			if($this->oUserCurrent)
-			{
-				//если пользователь уже зарегистрирован и авторизован, то просто привязываем к его аккаунту новые данные
-				if($this->bind($this->oUserCurrent, $user['identity']))
-				{
-					if (isset($_SERVER['HTTP_REFERER'])) {
-						$sBackUrl=$_SERVER['HTTP_REFERER'];
-						if (strpos($sBackUrl,Router::GetPath('ulogin'))===false) {
-							Router::Location($sBackUrl);
-						}
-					}
-						
-					$this->Message_AddNotice($this->Lang_Get('ulogin_success_binded'));
-
-					Router::Location(Config::Get('path.root.web').'/');
-				}
-				else
-				{
-					$this->Message_AddErrorSingle($this->Lang_Get('ulogin_this_else_registered'));
-					return Router::Action('error');
+				if ($s) {
+					$message .= "<script type=\"text/javascript\">$s</script>";
 				}
 			}
-			else
-			{
-				//пользователь не зарегистрирован, перенаправляем его на страницу регистрации
 
-			/*
-				данные от uLogin сохраняем в сессию
-				$this->Session_Set('ulogin_user_data', $user);
-	
-				$oSettings = $this->PluginUlogin_ModuleUlogin_GetSettingsById('one_click_registration');
-			
-				if(is_null($oSettings))
-					$oneClick_registrationFlag = Config::Get('plugin.ulogin.one_click_registration');
-				else
-					$oneClick_registrationFlag = $oSettings->getValue();
-
-				if($oneClick_registrationFlag == FALSE)
-					return Router::Action('ulogin','registration');
-				
-				return Router::Action('ulogin', 'one_click_registration');
-			 */ 
-				return $this->registration($user);
+			if (!empty($message) || !empty($params['title'])){
+				if ($params['type'] == 'error') {
+					$this->Message_AddError($message, $params['title'], true);
+				} else {
+					$this->Message_AddNotice($message, $params['title'], true);
+				}
 			}
-		}
 
-		$this->SetTemplateAction('index');
+			$redirect = urldecode(getRequest('backurl', ''));
+			if (empty($redirect)) {
+				$redirect = Config::Get('path.root.web').'/';
+			}
+			Router::Location($redirect);
+		} else {
+			echo json_encode($params);
+			exit;
+		}
 	}
 
-	protected function registration($userData)
-	{
-		if(isset($userData['nickname']))
-			$userData['nickname'] = trim(strtolower($userData['nickname']));
-		
-		if(isset($userData['email']))
-			$userData['email'] = strtolower($userData['email']);
-			
-		if(!isset($userData['nickname']) || !$userData['nickname'] || $this->User_GetUserByLogin($userData['nickname']))
-			$userData['nickname'] .= '_'.$userData['network'].'_'.$userData['uid'];
-		
-		if(!isset($userData['email']) || !$userData['email'])
-			$userData['email'] = $userData['uid'].'_'.$userData['network'].'@'.str_replace(array("http:","/") ,"" ,Config::Get('path.root.web'));
-			
-		while($this->User_GetUserByMail($userData['email']))
-			$userData['email'] = str_replace("@" ,"+@" ,$userData['email']);
-		
-		if(!isset($userData['sex']) || !in_array($userData['sex'], array(1,2)))
-			$userData['sex'] = 'other';
-		elseif($userData['sex'] == 2)
-			$userData['sex'] = 'man';
-		else 
-			$userData['sex'] = 'women';
-		
-		if(isset($userData['bdate']) and !empty($userData['bdate'])){
-                    $bdate = explode('.', $userData['bdate']);
-                    $userData['bdate'] = date('Y-m-d H:i:s', mktime(0,0,0,$bdate[1],$bdate[0], $bdate[2]));
-                }
-		
+
+	/**
+	 * Добавление в таблицу uLogin
+	 * @param $u_user_db - при непустом значении необходимо переписать данные в таблице uLogin
+	 */
+	protected function newUloginAccount($u_user_db = ''){
+		$u_data = $this->u_data;
+
+		if ($u_user_db) {
+			// данные о пользователе есть в ulogin_user, но отсутствуют в users => удалить их
+			$this->PluginUlogin_Ulogin_deleteUloginAccount(array('id' => $u_user_db['id']));
+		}
+
+		$CMSuserId = $this->PluginUlogin_Ulogin_getUserIdByEmail($u_data['email']);
+
+		// $emailExists == true -> есть пользователь с таким email
+		$user_id = 0;
+		$emailExists = false;
+		if ($CMSuserId) {
+			$user_id = $CMSuserId; // id юзера с тем же email
+			$emailExists = true;
+		}
+
+		// $isUserLogined == true -> пользователь онлайн
+		$currentUserId = $this->currentUserId;
+		$isUserLogined = $this->isUserLogined;
+
+		if (!$emailExists && !$isUserLogined) {
+			// отсутствует пользователь с таким email в базе -> регистрация в БД
+			$user_id = $this->regUser();
+			$this->addUloginAccount($user_id);
+		} else {
+			// существует пользователь с таким email или это текущий пользователь
+			if (intval($u_data["verified_email"]) != 1){
+				// Верификация аккаунта
+
+				$this->sendMessage(
+					array(
+						'title' => 'plugin.ulogin.ulogin_verify',//'Подтверждение аккаунта.',
+						'msg' => 'plugin.ulogin.ulogin_verify_text',
+						'script' => array('token' => $this->token),
+					)
+				);
+				return false;
+			}
+
+			$user_id = $isUserLogined ? $currentUserId : $user_id;
+
+			$other_u = $this->PluginUlogin_Ulogin_getUloginUserItem(array(
+				'user_id' => $user_id,
+			));
+
+			if ($other_u) {
+				// Синхронизация аккаунтов
+				if(!$isUserLogined && !isset($u_data['merge_account'])){
+					$this->sendMessage(
+						array(
+							'title' => 'plugin.ulogin.ulogin_synch',//'Синхронизация аккаунтов.',
+							'msg' => 'plugin.ulogin.ulogin_synch_text',
+							'script' => array('token' => $this->token, 'identity' => $other_u['identity']),
+						)
+					);
+					return false;
+				}
+			}
+
+			$this->addUloginAccount($user_id);
+		}
+
+		return $user_id;
+	}
+
+
+
+	/**
+	 * Регистрация пользователя в БД users
+	 * @return mixed
+	 */
+	protected function regUser(){
+		$u_data = $this->u_data;
+
+		$login = $this->generateNickname(
+			isset($u_data['first_name']) ? $u_data['first_name'] : '',
+			isset($u_data['last_name']) ? $u_data['last_name'] : '',
+			isset($u_data['nickname']) ? $u_data['nickname'] : '',
+			isset($u_data['bdate']) ? $u_data['bdate'] : ''
+		);
+
+		$password = md5($u_data['identity'].time().rand());
+		$password = substr($password, 0, 12);
+
 		$oUser=Engine::GetEntity('User');
-		$oUser->setLogin($userData['nickname']);
-		$oUser->setProfileSex($userData['sex']);
-		$oUser->setProfileName($userData['first_name'].' '.$userData['last_name']);
-		$oUser->setMail($userData['email']);
-		$oUser->setPassword(func_encrypt($this->GeneratePassword()));
+		$oUser->setLogin($login);
+		$oUser->setMail($u_data['email']);
+		$oUser->setPassword(md5($password));
 		$oUser->setDateRegister(date("Y-m-d H:i:s"));
 		$oUser->setIpRegister(func_getIp());
-		$oUser->setProfileBirthday($userData['bdate']);
-		
-		if(isset($userData['country']) && $userData['country'])
-			$oUser->setProfileCountry($userData['country']);
-		
-		if(isset($userData['city']) && $userData['city'])		
-			$oUser->setProfileCity($userData['city']);
 
-		if (Config::Get('general.reg.activation')) {
+		// Если используется активация, то генерим код активации
+		if ($activation_flag = (Config::Get('general.reg.activation') && $u_data["verified_email"] == -1)) {
 			$oUser->setActivate(0);
 			$oUser->setActivateKey(md5(func_generator().time()));
 		} else {
 			$oUser->setActivate(1);
 			$oUser->setActivateKey(null);
 		}
-		
-		return $this->UserRegistration($oUser, $userData);
-	}
-	
-	/*
-	 * Регистрация новго пользвателя и автоматическое привязываение ему новых данных (используется стандартная форма регистрации + возможность привязывать новые аккаунты)
-	
-	public function EventRegistration()
-	{	
-		$this->SetTemplateAction('registration');
 
-		
-		 // Если нажали кнопку "Зарегистрироваться"
-		
-		if ($user_data = $this->Session_Get('ulogin_user_data') and isPost('submit_register')) {
-			//Проверяем  входные данные
-			$bError=false;
-			
-			 // Проверка логина
-			 
-			if (!func_check(getRequest('login'),'login',3,30)) {
-				$this->Message_AddError($this->Lang_Get('registration_login_error'),$this->Lang_Get('error'));
-				$bError=true;
-			}
-			//  Проверка мыла
-			 
-			if (!func_check(getRequest('mail'),'mail')) {
-				$this->Message_AddError($this->Lang_Get('registration_mail_error'),$this->Lang_Get('error'));
-				$bError=true;
-			}
-			
-	 		// 	Проверка пароля
-			 
-			if (!func_check(getRequest('password'),'password',5)) {
-				$this->Message_AddError($this->Lang_Get('registration_password_error'),$this->Lang_Get('error'));
-				$bError=true;
-			} elseif (getRequest('password')!=getRequest('password_confirm')) {
-				$this->Message_AddError($this->Lang_Get('registration_password_error_different'),$this->Lang_Get('error'));
-				$bError=true;
+		if ($oUser = $this->User_Add($oUser)) {
+
+			$this->Hook_Run('registration_after', array('oUser' => $oUser));
+
+			// Подписываем пользователя на дефолтные события в ленте активности
+			$this->Stream_switchUserEventDefaultTypes($oUser->getId());
+
+			$oUser->setCountVote(0);
+			$oUser->setSettingsNoticeNewTopic(1);
+			$oUser->setSettingsNoticeNewComment(1);
+			$oUser->setSettingsNoticeNewTalk(1);
+			$oUser->setSettingsNoticeReplyComment(1);
+			$oUser->setSettingsNoticeNewFriend(1);
+
+			// Если стоит регистрация с активацией то проводим её
+			if ($activation_flag) {
+				// Отправляем на мыло письмо о подтверждении регистрации
+				$this->Notify_SendRegistrationActivate($oUser, $password);
+
+				$this->sendMessage (array(
+					'title' => "",
+					'msg' => array('plugin.ulogin.ulogin_account_inactive', $u_data['email']),
+					'type' => 'success'
+				));
+				return false;
 			}
 
-			
-			 // А не занят ли логин?
-			 
-			if ($this->User_GetUserByLogin(getRequest('login'))) {
-				$this->Message_AddError($this->Lang_Get('registration_login_error_used'),$this->Lang_Get('error'));
-				$bError=true;
-			}
-			
-			 // А не занято ли мыло?
-			 
-			if ($this->User_GetUserByMail(getRequest('mail'))) {
-				$this->Message_AddError($this->Lang_Get('registration_mail_error_used'),$this->Lang_Get('error'));
-				$bError=true;
-			}
-			
-			 // Если всё то пробуем зарегить
-			 
-			if (!$bError) {
-				
-				 // Создаем юзера
-				 
+			$this->Notify_SendRegistration($oUser, $password);
+			$oUser = $this->User_GetUserById($oUser->getId());
 
-				srand();
-
-				$oUser=Engine::GetEntity('User');
-				$oUser->setLogin(getRequest('login'));
-				$oUser->setMail(getRequest('mail'));
-				$oUser->setPassword(func_encrypt(getRequest('password')));
-				$oUser->setDateRegister(date("Y-m-d H:i:s"));
-				$oUser->setIpRegister(func_getIp());
-				
-				 // Если используется активация, то генерим код активации
-				 
-				if (Config::Get('general.reg.activation')) {
-					$oUser->setActivate(0);
-					$oUser->setActivateKey(md5(func_generator().time()));
-				} else {
-					$oUser->setActivate(1);
-					$oUser->setActivateKey(null);
-				}
-
-				//Убираем из сессии данные из uLogin
-				$this->Session_Drop('ulogin_user_data');					
-				
-				 // Регистрируем
-				 
-				return $this->UserRegistration($oUser, $user_data);
-			}
+			return $oUser->getId();
 		}
-		elseif(!$user_data)
-			return parent::EventNotFound();	
+
+		$this->sendMessage (array(
+			'title' => "plugin.ulogin.ulogin_reg_error",
+			'msg' => 'plugin.ulogin.ulogin_reg_error_text',
+			'type' => 'error'
+		));
+		return false;
 	}
-	*/
-	
-	/*
-	 * Регистрация новго пользвателя и автоматическое привязываение ему новых данных (используется упрощенная форма регистрации и отсутствует возможность привязывать новые аккаунты)
-	
-	public function EventOneClickRegistration()
-	{
-		$this->SetTemplateAction('one_click_registration');
 
-		if ($user_info = $this->Session_Get('ulogin_user_data') and isPost('one_click_registration_submit')) 
-		{
-			$bError=false;
-			
-			 // Проверка логина
-			 
-			if (!func_check(getRequest('login'),'login',3,30)) {
-				$this->Message_AddError($this->Lang_Get('registration_login_error'),$this->Lang_Get('error'));
-				$bError=true;
-			}
-	
-			// Проверка мыла
-			 
-			if (!func_check(getRequest('mail'),'mail')) {
-				$this->Message_AddError($this->Lang_Get('registration_mail_error'),$this->Lang_Get('error'));
-				$bError=true;
-			}
-			
-			// А не занят ли логин?
-			
-			if ($this->User_GetUserByLogin(getRequest('login'))) {
-				$this->Message_AddError($this->Lang_Get('registration_login_error_used'),$this->Lang_Get('error'));
-				$bError=true;
-			}
 
-			//	А не занято ли мыло?			
-			if ($this->User_GetUserByMail(getRequest('mail'))) {
-				$this->Message_AddError($this->Lang_Get('registration_mail_error_used'),$this->Lang_Get('error'));
-				$bError=true;
-			}
 
-			if(!$bError)
-			{
-				$oUser=Engine::GetEntity('User');
-				$oUser->setLogin(getRequest('login'));
-				if(isset($user_info['email']) and !$this->User_GetUserByMail($user_info['email']))
-					$oUser->setMail($user_info['email']);
-				else
-					$oUser->setMail(getRequest('mail'));
-				$oUser->setPassword(func_encrypt($this->GeneratePassword()));
-				$oUser->setDateRegister(date("Y-m-d H:i:s"));
-				$oUser->setIpRegister(func_getIp());
-
-				if (Config::Get('general.reg.activation')) {
-					$oUser->setActivate(0);
-					$oUser->setActivateKey(md5(func_generator().time()));
-				} else {
-					$oUser->setActivate(1);
-					$oUser->setActivateKey(null);
-				}
-				
-				$this->Session_Drop('ulogin_user_data');	
-				return $this->UserRegistration($oUser, $user_info);
-			}
-		
-			$this->Viewer_Assign('user_info', $user_info);
-		}
-		elseif(!$user_info)
-			return parent::EventNotFound();
-	}
-	*/
-	
-	/*
-	 * Метод для привязки новых аккаунтов(если пользователь не авторизован изначально. доступнотолько с расширенной формой регистрации)
-	 * 
-	public function EventBind()
-	{
-		$this->SetTemplateAction('registration');
-		
-	 	// Если нажали кнопку "Войти"
-		if ($user_info = $this->Session_Get('ulogin_user_data') and isPost('submit_bind') and is_string(getRequest('bind_login')) and is_string(getRequest('bind_password'))) {
-			
-			// Проверяем есть ли такой юзер по логину
-			
-			if ((func_check(getRequest('bind_login'),'mail') and $oUser=$this->User_GetUserByMail(getRequest('bind_login')))  or  $oUser=$this->User_GetUserByLogin(getRequest('bind_login'))) {	
-				
-				 // Сверяем хеши паролей и проверяем активен ли юзер
-				 
-				if ($oUser->getPassword()==func_encrypt(getRequest('bind_password')) and $oUser->getActivate() ) {
-					$bRemember=getRequest('bind_remember',false) ? true : false;
-					
-					 // Авторизуем 
-		
-					$this->Session_Drop('ulogin_user_data');
-				
-					if(!$this->bind($oUser, $user_info['identity']))
-					{
-						$this->Message_AddErrorSingle($this->Lang_Get('ulogin_this_else_registered'));
-						return Router::Action('error');
-					}
-
-					$this->User_Authorization($oUser,$bRemember);
-
-					Router::Location(Config::Get('path.root.web').'/');
-				}
-			}
-			$this->Viewer_Assign('bLoginError',true);
-		}
-		elseif(!$user_info)
-			return parent::EventNotFound();
-	}
+	/**
+	 * Добавление записи в таблицу ulogin_user
+	 * @param $user_id
+	 * @return bool
 	 */
+	protected function addUloginAccount($user_id){
+		$res = $this->PluginUlogin_Ulogin_addUloginAccount(array(
+			'user_id' => $user_id,
+			'identity' => strval($this->u_data['identity']),
+			'network' => $this->u_data['network'],
+		));
 
-	private function UserRegistration($oUser, $uLoginUserData)
-	{
-		if ($oUser = $this->User_Add($oUser) and $this->bind($oUser, $uLoginUserData['identity'])) {
-			/**
-			 * Создаем персональный блог
-			 */
-
-			if(isset($uLoginUserData['photo']) && $uLoginUserData['photo'] && $photo = $this->loadFile($uLoginUserData['photo']))
-			{
-				if($sPath=$this->UploadAvatar($photo,$oUser))
-					$oUser->setProfileAvatar($sPath);
-			}
-
-			if(isset($uLoginUserData['photo_big']) && $uLoginUserData['photo_big'] && $photo_big = $this->loadFile($uLoginUserData['photo_big']))
-			{
-				if ($sFileFoto=$this->UploadFoto($photo_big,$oUser))
-					$oUser->setProfileFoto($sFileFoto);
-			}
-
-			if ($oUser->getProfileCountry()) {
-				/*if (!($oCountry=$this->Geo_GetCountryByName($oUser->getProfileCountry()))) {
-					$oCountry=Engine::GetEntity('Geo_Country');
-     				$oCountry->setName($oUser->getProfileCountry());
-					$this->User_AddCountry($oCountry);
-				}
-				$this->User_SetCountryUser($oCountry->getId(),$oUser->getId());*/
-			}
-
-			/**
-			 * Добавляем город
-			 */
-    		if ($oUser->getProfileCity()) {
-				/*if (!($oCity=$this->User_GetCityByName($oUser->getProfileCity()))) {
-					$oCity=Engine::GetEntity('User_City');
-					$oCity->setName($oUser->getProfileCity());
-					$this->User_AddCity($oCity);
-				}
-				$this->User_SetCityUser($oCity->getId(),$oUser->getId()); */
-			}
-
-			$this->User_Update($oUser);
-			
-			$this->Blog_CreatePersonalBlog($oUser);				
-
-			$oUser=$this->User_GetUserById($oUser->getId());
-			$this->User_Authorization($oUser,true);
-
-			$this->Message_AddNotice($this->Lang_Get('ulogin_success_register'));
-			Router::Location(Config::Get('path.root.web').'/');	
-			return true;			
+		if (!$res) {
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_auth_error',//"Произошла ошибка при авторизации.",
+				'msg' => 'plugin.ulogin.ulogin_add_account_error',//"Не удалось записать данные об аккаунте.",
+				'type' => 'error'
+			));
+			return false;
 		}
-		
-		return parent::EventNotFound(); 		
+
+		return true;
 	}
 
-	/*
-	 * Генераия случайного пароля 
+
+
+	/**
+	 * Выполнение входа пользователя в систему по $user_id
+	 * @param $u_user
+	 * @param int $user_id
 	 */
-	protected function GeneratePassword()	
-	{
-		return md5(uniqid(rand(), true));
+	protected function loginUser($user_id = 0) {
+		// обновление данных
+		$change_flag = false;
+		$u_data = $this->u_data;
+		$oUser = $this->ModuleUser_GetUserById($user_id);
+
+		// проверка имени профиля
+		if (!$oUser->getProfileName()) {
+			if (!empty($u_data['first_name']) && !empty($u_data['last_name'])) {
+				$profileName = $u_data['first_name'] . ' ' . $u_data['last_name'];
+			} else {
+				$profileName = $this->generateNickname(
+					isset($u_data['first_name']) ? $u_data['first_name'] : '',
+					isset($u_data['last_name']) ? $u_data['last_name'] : '',
+					isset($u_data['nickname']) ? $u_data['nickname'] : '',
+					isset($u_data['bdate']) ? $u_data['bdate'] : ''
+				);
+			}
+
+			$oUser->setProfileName($profileName);
+			$change_flag = true;
+		}
+
+		// проверка пола
+		if ($oUser->getProfileSex() == 'other') {
+			$profileSex = 'other';
+			if (isset($u_data['sex']) && $u_data['sex'] == 2)
+				$profileSex = 'man';
+			else if (isset($u_data['sex']) && $u_data['sex'] == 1)
+				$profileSex = 'women';
+
+			if ($profileSex != 'other') {
+				$oUser->setProfileSex($profileSex);
+				$change_flag = true;
+			}
+		}
+
+		// проверка даты рождения
+		if (!$oUser->getProfileBirthday()) {
+			if(!empty($u_data['bdate']))
+				$oUser->setProfileBirthday(date("Y-m-d H:i:s", strtotime($u_data['bdate'])));
+			$change_flag = true;
+		}
+
+		// проверка адреса
+		$aGeoTargets=$this->Geo_GetTargetsByTargetArray('user',$user_id);
+		if (empty($aGeoTargets)) {
+			$oGeoObject=null;
+			if (!empty($u_data['city'])) {
+				$aRes = $this->Geo_GetCities(array('name_ru'=>$u_data['city']),array('sort'=>'asc'),1,1);
+				if (!empty($aRes['collection'][0])) {
+					$oGeoObject = $aRes['collection'][0];
+				}
+			}
+			if (!$oGeoObject && !empty($u_data['country'])) {
+				$aRes = $this->Geo_GetCountries(array('name_ru'=>$u_data['country']),array('sort'=>'asc'),1,1);
+				if (!empty($aRes['collection'][0])) {
+					$oGeoObject = $aRes['collection'][0];
+				}
+			}
+
+			if ($oGeoObject) {
+				$this->Geo_CreateTarget($oGeoObject, 'user', $oUser->getId());
+				if ($oCountry=$oGeoObject->getCountry()) {
+					$oUser->setProfileCountry($oCountry->getName());
+				}
+				if ($oRegion=$oGeoObject->getRegion()) {
+					$oUser->setProfileRegion($oRegion->getName());
+				}
+				if ($oCity=$oGeoObject->getCity()) {
+					$oUser->setProfileCity($oCity->getName());
+				}
+				$change_flag = true;
+			}
+		}
+
+		// проверка аватара и фото
+		if (!$oUser->getProfileAvatar() || !$oUser->getProfileFoto()) {
+			$file_url = (!empty($u_data['photo_big']))
+				? $u_data['photo_big']
+				: (!empty( $u_data['photo'] ) ? $u_data['photo'] : '');
+
+			// загрузка аватара
+			if($file_url && $aFile = $this->loadFile($file_url)) {
+				$aFile2 = $aFile . "_copy";
+				@copy($aFile, $aFile2);
+
+				if (!$oUser->getProfileAvatar()) {
+					if ($sFileAvatar=$this->User_UploadAvatar($aFile,$oUser))
+						$oUser->setProfileAvatar( $sFileAvatar );
+					$change_flag = true;
+				}
+
+				if (!$oUser->getProfileFoto()) {
+					if ($sFileFoto=$this->User_UploadFoto($aFile2,$oUser))
+						$oUser->setProfileFoto( $sFileFoto );
+					$change_flag = true;
+				}
+			}
+		}
+
+		if ($change_flag) {
+			$this->User_Update( $oUser );
+		}
+
+		$result = $this->User_Authorization($oUser, true);
+
+		if (!$result) {
+			$this->sendMessage (
+				array(
+					'title' => '',
+					'msg' => 'plugin.ulogin.ulogin_auth_error', // "Произошла ошибка при авторизации."
+					'type' => 'error',
+				)
+			);
+		}
+
+		return true;
+	}
+
+
+
+	/**
+	 * Проверка текущего пользователя
+	 * @param $user_id
+	 */
+	protected function checkCurrentUserId($user_id){
+		$currentUserId = $this->currentUserId;
+		if($this->isUserLogined) {
+			if ($currentUserId == $user_id) {
+				return true;
+			}
+			$this->sendMessage (
+				array(
+					'title' => '',
+					'msg' => 'plugin.ulogin.ulogin_account_not_available',
+					'type' => 'error',
+				)
+			);
+			return false;
+		}
+		return true;
+	}
+
+
+
+	/**
+	 * Обработка ответа сервера авторизации
+	 */
+	protected function uloginParseRequest(){
+
+		$this->token = getRequest('token', '', 'post');
+
+		if (!$this->token) {
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+				'msg' => 'plugin.ulogin.ulogin_no_token_error', //"Не был получен токен uLogin.",
+				'type' => 'error'
+			));
+			return false;
+		}
+
+		$s = $this->getUserFromToken();
+
+		if (!$s){
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+				'msg' => 'plugin.ulogin.ulogin_no_user_data_error', //"Не удалось получить данные о пользователе с помощью токена.",
+				'type' => 'error'
+			));
+			return false;
+		}
+
+		$this->u_data = json_decode($s, true);
+
+		if (!$this->checkTokenError()){
+			return false;
+		}
+
+		return $this->u_data;
+	}
+
+
+	/**
+	 * "Обменивает" токен на пользовательские данные
+	 */
+	protected function getUserFromToken() {
+		$response = false;
+		if ($this->token){
+			$host = Config::Get('path.root.web');
+			$request = 'http://ulogin.ru/token.php?token=' . $this->token . '&host=' . $host;
+			$response = $this->getResponse($request);
+		}
+		return $response;
 	}
 
 	/**
-	 * Привязка дданных о uLogin к пользовательским данным livestreet
+	 * Получение данных с помощью curl или file_get_contents
+	 * @param string $url
+	 * @return bool|mixed|string
 	 */
-	private function bind($oUser, $identity) 
-	{
-		$oUloginNewEntity=LS::Ent('PluginUlogin_ModuleUlogin_EntityUlogin');
-		$oUloginNewEntity->setIdentity($identity);
-		$oUloginNewEntity->setUserid($oUser->getId());
-		return $oUloginNewEntity->save();
-	}
-	/**
-	 * Админпанель для плагина
-	 */
-	public function EventAdmin() {
-		if (!$this->oUserAdmin) {
-			return parent::EventNotFound();
+	private function getResponse($url="", $do_abbort=true) {
+		$result = false;
+
+		if (in_array('curl', get_loaded_extensions())) {
+			$request = curl_init($url);
+			curl_setopt($request, CURLOPT_RETURNTRANSFER, 1);
+			curl_setopt($request, CURLOPT_BINARYTRANSFER, 1);
+			$result = curl_exec($request);
+		}elseif (function_exists('file_get_contents') && ini_get('allow_url_fopen')){
+			$result = file_get_contents($url);
 		}
 
-		$this->SetTemplateAction('admin');
-	
-		$oSettings = $this->PluginUlogin_ModuleUlogin_GetSettingsById('one_click_registration');
-
-		if(is_null($oSettings))
-			$oneClick_registrationFlag = Config::Get('plugin.ulogin.one_click_registration');
-		else
-			$oneClick_registrationFlag = $oSettings->getValue();
-	
-		if(isPost('admin_submit'))
-		{
-			$one_click_registration = getRequest('registration_type');
-	
-			if($one_click_registration == 'full_registration')
-				$oneClick_registrationFlag = false;
-			else
-				$oneClick_registrationFlag = true;
-	
-			$oSettings = $this->PluginUlogin_ModuleUlogin_GetSettingsById('one_click_registration');
-		
-			if(is_null($oSettings))
-			{
-				$oSettings = LS::Ent('PluginUlogin_ModuleUlogin_EntitySettings');
-				$oSettings->setId('one_click_registration');
+		if (!$result) {
+			if ($do_abbort) {
+				$this->sendMessage(array(
+					'title' => 'plugin.ulogin.ulogin_read_response_error',
+					'msg' => 'plugin.ulogin.ulogin_read_response_error_text',
+					'type' => 'error'
+				));
 			}
-	
-			$oSettings->setValue((string)(int)$oneClick_registrationFlag);			
-			$oSettings->Save();
-
-			$this->Message_AddNotice($this->Lang_Get('ulogin_settings_saved'));
+			return false;
 		}
-	
-		$this->Viewer_Assign('one_click_registration', $oneClick_registrationFlag);
+
+		return $result;
 	}
 
+	/**
+	 * Загрузка файла аватарки
+	 * @param $fileUrl
+	 * @return array|bool
+	 */
 	protected function loadFile($fileUrl)
 	{
+//		$file = $this->getResponse($fileUrl, false);
 		$file = file_get_contents($fileUrl);
-		
-		if($file === False)
-			return False;
-		
-		$fileArray = array('size' => 0, 'name' => 'some_name', 'type' => '', 'tmp_name' => '', 'error' => 0);
-		
+
+		if(!$file) {
+			return false;
+		}
+
 		$tmp_name = tempnam(Config::Get('sys.cache.dir'), "php");
-		
+
 		$handle = fopen($tmp_name, "w");
 		$fileSize = fwrite($handle, $file);
 		fclose($handle);
-		
+
 		if(!$fileSize)
 		{
 			@unlink($tmp_name);
-			return False;
+			return false;
 		}
-		
-		$fileArray['tmp_name'] = $tmp_name;
-		$fileArray['size'] = $fileSize;
-		
-		//$finfo = finfo_open(FILEINFO_MIME_TYPE);
-		
-		//$fileArray['type'] = finfo_file($finfo, $fileArray['tmp_name']);
-		
-		//finfo_close($finfo);
-		
-		return $fileArray;
+
+		return $tmp_name;
 	}
-	
-	public function UploadAvatar($aFile,$oUser) {
-		if(!is_array($aFile) || !isset($aFile['tmp_name'])) {
-			return false;
-		}
 
-		$sFileTmp=Config::Get('sys.cache.dir').func_generator();
-		if (!rename($aFile['tmp_name'],$sFileTmp)) {
-			return false;
-		}
-		
-		$sPath = $this->Image_GetIdDir($oUser->getId());
-		$aParams=$this->Image_BuildParams('avatar');
-
-		/**
-		 * Срезаем квадрат
-		 */
-		$oImage = new LiveImage($sFileTmp);
-		/**
-		 * Если объект изображения не создан,
-		 * возвращаем ошибку
-		 */
-		if($sError=$oImage->get_last_error()) {
-			// Вывод сообщения об ошибки, произошедшей при создании объекта изображения
-			// $this->Message_AddError($sError,$this->Lang_Get('error'));
-			@unlink($sFileTmp);
-			return false;
-		}
-
-		$oImage = $this->Image_CropSquare($oImage);
-		$oImage->set_jpg_quality($aParams['jpg_quality']);
-		$oImage->output(null,$sFileTmp);
-
-		if ($sFileAvatar=$this->Image_Resize($sFileTmp,$sPath,'avatar_100x100',Config::Get('view.img_max_width'),Config::Get('view.img_max_height'),100,100,false,$aParams)) {
-			$aSize=Config::Get('module.user.avatar_size');
-			foreach ($aSize as $iSize) {
-				if ($iSize==0) {
-					$this->Image_Resize($sFileTmp,$sPath,'avatar',Config::Get('view.img_max_width'),Config::Get('view.img_max_height'),null,null,false,$aParams);
-				} else {
-					$this->Image_Resize($sFileTmp,$sPath,"avatar_{$iSize}x{$iSize}",Config::Get('view.img_max_width'),Config::Get('view.img_max_height'),$iSize,$iSize,false,$aParams);
-				}
-			}
-			@unlink($sFileTmp);
-			/**
-			 * Если все нормально, возвращаем расширение загруженного аватара
-			 */
-			return $this->Image_GetWebPath($sFileAvatar);
-		}
-		@unlink($sFileTmp);
-		/**
-		 * В случае ошибки, возвращаем false
-		 */
-		return false;
-	}
 
 	/**
-	 * Upload user foto
-	 *
-	 * @param  array           $aFile
-	 * @param  ModuleUser_EntityUser $oUser
+	 * Проверка пользовательских данных, полученных по токену
+	 */
+	protected function checkTokenError(){
+		if (!is_array($this->u_data)){
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+				'msg' => 'plugin.ulogin.ulogin_wrong_user_data_error', //"Данные о пользователе содержат неверный формат.",
+				'type' => 'error'
+			));
+			return false;
+		}
+
+		if (isset($this->u_data['error'])){
+			$strpos = strpos($this->u_data['error'],'host is not');
+			if ($strpos){
+				$this->sendMessage (array(
+					'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+					'msg' => array('plugin.ulogin.ulogin_host_address_error', sub($this->u_data['error'],intval($strpos)+12)),//"<i>ERROR</i>: адрес хоста не совпадает с оригиналом " . sub($this->u_data['error'],intval($strpos)+12),
+					'type' => 'error'
+				));
+				return false;
+			}
+			switch ($this->u_data['error']){
+				case 'token expired':
+					$this->sendMessage (array(
+						'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+						'msg' => 'plugin.ulogin.ulogin_token_expired_error', //"<i>ERROR</i>: время жизни токена истекло",
+						'type' => 'error'
+					));
+					break;
+				case 'invalid token':
+					$this->sendMessage (array(
+						'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+						'msg' => 'plugin.ulogin.ulogin_invalid_token_error', //"<i>ERROR</i>: неверный токен",
+						'type' => 'error'
+					));
+					break;
+				default:
+					$this->sendMessage (array(
+						'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+						'msg' => "<i>ERROR</i>: " . $this->u_data['error'],
+						'type' => 'error'
+					));
+			}
+			return false;
+		}
+		if (!isset($this->u_data['identity'])){
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+				'msg' => array('plugin.ulogin.ulogin_no_variable_error', 'identity'), //"В возвращаемых данных отсутствует переменная <b>identity</b>.",
+				'type' => 'error'
+			));
+			return false;
+		}
+		if (!isset($this->u_data['email'])){
+			$this->sendMessage (array(
+				'title' => 'plugin.ulogin.ulogin_auth_error', //"Произошла ошибка при авторизации.",
+				'msg' => array('plugin.ulogin.ulogin_no_variable_error', 'email'), //"В возвращаемых данных отсутствует переменная <b>email</b>",
+				'type' => 'error'
+			));
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	 * Гнерация логина пользователя
+	 * в случае успешного выполнения возвращает уникальный логин пользователя
+	 * @param $first_name
+	 * @param string $last_name
+	 * @param string $nickname
+	 * @param string $bdate
+	 * @param array $delimiters
 	 * @return string
 	 */
-	public function UploadFoto($aFile,$oUser) {
-		if(!is_array($aFile) || !isset($aFile['tmp_name'])) {
-			return false;
+	protected function generateNickname($first_name, $last_name="", $nickname="", $bdate="", $delimiters=array('.', '_')) {
+		$delim = array_shift($delimiters);
+
+		$first_name = $this->translitIt($first_name);
+		$first_name_s = substr($first_name, 0, 1);
+
+		$variants = array();
+		if (!empty($nickname))
+			$variants[] = $nickname;
+		$variants[] = $first_name;
+		if (!empty($last_name)) {
+			$last_name = $this->translitIt($last_name);
+			$variants[] = $first_name.$delim.$last_name;
+			$variants[] = $last_name.$delim.$first_name;
+			$variants[] = $first_name_s.$delim.$last_name;
+			$variants[] = $first_name_s.$last_name;
+			$variants[] = $last_name.$delim.$first_name_s;
+			$variants[] = $last_name.$first_name_s;
+		}
+		if (!empty($bdate)) {
+			$date = explode('.', $bdate);
+			$variants[] = $first_name.$date[2];
+			$variants[] = $first_name.$delim.$date[2];
+			$variants[] = $first_name.$date[0].$date[1];
+			$variants[] = $first_name.$delim.$date[0].$date[1];
+			$variants[] = $first_name.$delim.$last_name.$date[2];
+			$variants[] = $first_name.$delim.$last_name.$delim.$date[2];
+			$variants[] = $first_name.$delim.$last_name.$date[0].$date[1];
+			$variants[] = $first_name.$delim.$last_name.$delim.$date[0].$date[1];
+			$variants[] = $last_name.$delim.$first_name.$date[2];
+			$variants[] = $last_name.$delim.$first_name.$delim.$date[2];
+			$variants[] = $last_name.$delim.$first_name.$date[0].$date[1];
+			$variants[] = $last_name.$delim.$first_name.$delim.$date[0].$date[1];
+			$variants[] = $first_name_s.$delim.$last_name.$date[2];
+			$variants[] = $first_name_s.$delim.$last_name.$delim.$date[2];
+			$variants[] = $first_name_s.$delim.$last_name.$date[0].$date[1];
+			$variants[] = $first_name_s.$delim.$last_name.$delim.$date[0].$date[1];
+			$variants[] = $last_name.$delim.$first_name_s.$date[2];
+			$variants[] = $last_name.$delim.$first_name_s.$delim.$date[2];
+			$variants[] = $last_name.$delim.$first_name_s.$date[0].$date[1];
+			$variants[] = $last_name.$delim.$first_name_s.$delim.$date[0].$date[1];
+			$variants[] = $first_name_s.$last_name.$date[2];
+			$variants[] = $first_name_s.$last_name.$delim.$date[2];
+			$variants[] = $first_name_s.$last_name.$date[0].$date[1];
+			$variants[] = $first_name_s.$last_name.$delim.$date[0].$date[1];
+			$variants[] = $last_name.$first_name_s.$date[2];
+			$variants[] = $last_name.$first_name_s.$delim.$date[2];
+			$variants[] = $last_name.$first_name_s.$date[0].$date[1];
+			$variants[] = $last_name.$first_name_s.$delim.$date[0].$date[1];
+		}
+		$i=0;
+
+		$exist = true;
+		while (true) {
+			if ($exist = $this->userExist($variants[$i])) {
+				foreach ($delimiters as $del) {
+					$replaced = str_replace($delim, $del, $variants[$i]);
+					if($replaced !== $variants[$i]){
+						$variants[$i] = $replaced;
+						if (!$exist = $this->userExist($variants[$i]))
+							break;
+					}
+				}
+			}
+			if ($i >= count($variants)-1 || !$exist)
+				break;
+			$i++;
 		}
 
-		$sFileTmp=Config::Get('sys.cache.dir').func_generator();
-		if (!rename($aFile['tmp_name'],$sFileTmp)) {
-			return false;
-		}
-		$sDirUpload=$this->Image_GetIdDir($oUser->getId());
-		$aParams=$this->Image_BuildParams('foto');
-
-		if ($sFileFoto=$this->Image_Resize($sFileTmp,$sDirUpload,func_generator(6),Config::Get('view.img_max_width'),Config::Get('view.img_max_height'),250,null,true,$aParams)) {
-			@unlink($sFileTmp);
-			/**
-			 * удаляем старое фото
-			 */
-			$this->User_DeleteFoto($oUser);
-			return $this->Image_GetWebPath($sFileFoto);
-		}
-		@unlink($sFileTmp);
-		return false;
+		if ($exist) {
+			while ($exist) {
+				$nickname = $first_name.mt_rand(1, 100000);
+				$exist = $this->userExist($nickname);
+			}
+			return $nickname;
+		} else
+			return $variants[$i];
 	}
+
+
+	/**
+	 * Проверка существует ли пользователь с заданным логином
+	 */
+	protected function userExist($login){
+		if (!$this->PluginUlogin_Ulogin_checkUserName(strtolower($login))){
+			return false;
+		}
+		return true;
+	}
+
+
+	/**
+	 * Транслит
+	 */
+	protected function translitIt($str) {
+		$tr = array(
+			"А"=>"a","Б"=>"b","В"=>"v","Г"=>"g",
+			"Д"=>"d","Е"=>"e","Ж"=>"j","З"=>"z","И"=>"i",
+			"Й"=>"y","К"=>"k","Л"=>"l","М"=>"m","Н"=>"n",
+			"О"=>"o","П"=>"p","Р"=>"r","С"=>"s","Т"=>"t",
+			"У"=>"u","Ф"=>"f","Х"=>"h","Ц"=>"ts","Ч"=>"ch",
+			"Ш"=>"sh","Щ"=>"sch","Ъ"=>"","Ы"=>"yi","Ь"=>"",
+			"Э"=>"e","Ю"=>"yu","Я"=>"ya","а"=>"a","б"=>"b",
+			"в"=>"v","г"=>"g","д"=>"d","е"=>"e","ж"=>"j",
+			"з"=>"z","и"=>"i","й"=>"y","к"=>"k","л"=>"l",
+			"м"=>"m","н"=>"n","о"=>"o","п"=>"p","р"=>"r",
+			"с"=>"s","т"=>"t","у"=>"u","ф"=>"f","х"=>"h",
+			"ц"=>"ts","ч"=>"ch","ш"=>"sh","щ"=>"sch","ъ"=>"y",
+			"ы"=>"y","ь"=>"","э"=>"e","ю"=>"yu","я"=>"ya"
+		);
+		if (preg_match('/[^A-Za-z0-9\_\-]/', $str)) {
+			$str = strtr($str,$tr);
+			$str = preg_replace('/[^A-Za-z0-9\_\-\.]/', '', $str);
+		}
+		return $str;
+	}
+
+
+
+	/**
+	 * Удаление привязки к аккаунту соцсети в таблице ulogin_user для текущего пользователя
+	 */
+	protected function deleteAccount() {
+		if (!isAjaxRequest()) {
+			return parent::EventNotFound();
+		}
+
+		$this->isUserLogined = $this->User_IsAuthorization();
+		if ($this->isUserLogined) {
+			$this->currentUserId = $this->User_GetUserCurrent()->getId();
+		} else {
+			$this->currentUserId = 0;
+		}
+
+		if(!$this->isUserLogined) {exit;}
+
+		$user_id = $this->currentUserId;
+
+		$network = getRequest('network', '', 'post');
+
+		if ($user_id > 0 && $network != '') {
+			try {
+				$this->PluginUlogin_Ulogin_deleteUloginAccount(array('user_id' => $user_id, 'network' => $network));
+				echo json_encode(array(
+					'title' => '',
+					'msg' => $this->Lang_Get('plugin.ulogin.ulogin_delete_account_success', array('s'=>$network)), //"Удаление аккаунта $network успешно выполнено",
+					'type' => 'success'
+				));
+				exit;
+			} catch (Exception $e) {
+				echo json_encode(array(
+					'title' => $this->Lang_Get('plugin.ulogin.ulogin_delete_account_error'), //"Ошибка при удалении аккаунта",
+					'msg' => "Exception: " . $e->getMessage(),
+					'type' => 'error'
+				));
+				exit;
+			}
+		}
+		exit;
+	}
+
 }
-?>

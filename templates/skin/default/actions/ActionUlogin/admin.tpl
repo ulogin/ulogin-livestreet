@@ -3,27 +3,29 @@
 
 <div class="ulogin-admin">
 
-	<h1>{$aLang.ulogin_admin_title}</h1>
-	<form action="{router page='ulogin/admin'}" method="POST">
-		
-			<div id="registration_type">
-				<span class="note">{$aLang.ulogin_choose_registration_type}</span>
-				<p>
-					<label for="registration_type"><b>{$aLang.ulogin_one_click_registration}:</b></label>
-					<input type="radio" name="registration_type" {if $one_click_registration}checked{/if} value="one_click_registration"/>
-					<span class="note">{$aLang.ulogin_one_click_registration_notaion}</span>
-				</p>
-			
-				<p>
-					<label for="registration_type"><b>{$aLang.ulogin_full_registration}:</b></label>
-					<input type="radio" name="registration_type" {if not $one_click_registration}checked{/if} value="full_registration"/>
-					<span class="note">{$aLang.ulogin_full_registration_notaion}</span>
-				</p>
-			</div>
+	<h2 class="page-header">{$aLang.plugin.ulogin.admin_ulogin_title}</h2>
 
-			<input type="hidden" name="admin_submit" value="1">
+	{$aLang.plugin.ulogin.admin_ulogin_title_explain}
 
-			<input type="submit" class="button" value="{$aLang.ulogin_save}" />
+	<form action="{router page='ulogin/admin'}" method="POST" class="wrapper-content">
+		<p>
+			<label for="uloginid1"><b>{$aLang.plugin.ulogin.admin_uloginid1}:</b></label>
+			<input type="text" name="uloginid1" id="uloginid1" value="{$uloginid1}" maxlength="8" />
+			<span class="note">{$aLang.plugin.ulogin.admin_uloginid1_explain}</span>
+		</p>
+		<p>
+			<label for="uloginid2"><b>{$aLang.plugin.ulogin.admin_uloginid2}:</b></label>
+			<input type="text" name="uloginid2" id="uloginid2" value="{$uloginid2}" maxlength="8" />
+			<span class="note">{$aLang.plugin.ulogin.admin_uloginid2_explain}</span>
+		</p>
+		<p>
+			<label for="uloginid_profile"><b>{$aLang.plugin.ulogin.admin_uloginid_profile}:</b></label>
+			<input type="text" name="uloginid_profile" id="uloginid_profile" value="{$uloginid_profile}"  maxlength="8"/>
+			<span class="note">{$aLang.plugin.ulogin.admin_uloginid_profile_explain}</span>
+		</p>
+
+		<input type="hidden" name="admin_submit" value="1">
+		<input type="submit" class="button button-primary" value="{$aLang.plugin.ulogin.ulogin_save}" />
 	</form>
 
 </div>
